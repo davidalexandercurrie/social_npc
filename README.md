@@ -65,25 +65,32 @@ fn main() {
 ## Core Components
 
 ### NPC
+
 Represents a game character with:
+
 - Name
 - Current location
 - Current activity
 
 ### Memory System
+
 Hierarchical memory management:
+
 - **Immediate Context**: Current situation awareness
 - **Recent Events**: Short-term memory buffer
 - **Core Memories**: Long-term significant memories
 - **Relationship Memories**: Per-NPC relationship tracking
 
 ### Intent System
+
 NPCs can form intentions with:
+
 - Action to perform
 - Optional target
 - Reasoning behind the action
 
 ### Extensible Traits
+
 - `NpcBehavior`: Implement custom decision-making logic
 - `MemoryManager`: Custom memory processing
 - `NpcStorage`: Persistence layer for NPCs and memories
@@ -98,11 +105,12 @@ See the `examples/` directory for more detailed usage examples.
 
 Licensed under either of
 
-- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or http://www.apache.org/licenses/LICENSE-2.0)
-- MIT license ([LICENSE-MIT](LICENSE-MIT) or http://opensource.org/licenses/MIT)
+- Apache License, Version 2.0 ([LICENSE-APACHE](LICENSE-APACHE) or <http://www.apache.org/licenses/LICENSE-2.0>)
+- MIT license ([LICENSE-MIT](LICENSE-MIT) or <http://opensource.org/licenses/MIT>)
 
 at your option.
 
 ## Contribution
 
 Unless you explicitly state otherwise, any contribution intentionally submitted for inclusion in the work by you, as defined in the Apache-2.0 license, shall be dual licensed as above, without any additional terms or conditions.
+

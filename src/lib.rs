@@ -1,45 +1,45 @@
 //! # Social NPC Library
 //!
-//! A library for managing NPC social behaviors and memory systems in games.
+//! A complete NPC engine for managing social behaviors, memory systems, and turn-based gameplay.
 //!
 //! ## Features
 //!
+//! - **NPC Engine**: Complete turn-based NPC management system
 //! - **Memory System**: Hierarchical memory management with immediate context, short-term, and long-term memories
-//! - **Relationship Tracking**: Track relationships between NPCs with sentiment and bond strength
-//! - **Intent System**: NPCs can form intentions and take actions
-//! - **Extensible Traits**: Implement custom behavior, storage, and perception systems
+//! - **Intent System**: NPCs form intentions based on their state and memories
+//! - **GM Resolution**: Game Master system resolves intents into reality
+//! - **Contract System**: Multi-turn interactions between NPCs
+//! - **LLM Integration**: Built-in Ollama support for AI-driven behaviors
 //!
 //! ## Example
 //!
-//! ```rust
-//! use social_npc::{Npc, MemorySystem, Intent};
+//! ```rust,no_run
+//! use social_npc::{NpcEngine, llm::OllamaClient};
 //!
-//! // Create an NPC
-//! let npc = Npc::builder("Alice")
-//!     .location("tavern")
-//!     .activity("drinking")
-//!     .build();
+//! # async fn example() -> anyhow::Result<()> {
+//! // Create the engine with Ollama
+//! let llm = OllamaClient::new("llama3.2:latest");
+//! let mut engine = NpcEngine::new("./data", llm)?;
 //!
-//! // Create a memory system
-//! let mut memories = MemorySystem::with_context("Just arrived at the tavern");
+//! // Execute a complete turn
+//! let result = engine.execute_turn().await?;
 //!
-//! // Add a recent event
-//! memories.add_self_event("Ordered a drink from the bartender");
-//!
-//! // Create an intent
-//! let intent = Intent::with_target(
-//!     "Alice",
-//!     "talk",
-//!     "Bob",
-//!     "Want to catch up with an old friend"
-//! );
+//! // Or run individual phases
+//! let intents = engine.collect_intents().await?;
+//! let reality = engine.resolve_intents(intents).await?;
+//! # Ok(())
+//! # }
 //! ```
 
+pub mod engine;
+pub mod llm;
 pub mod memory;
+pub mod parser;
 pub mod traits;
 pub mod types;
 
 // Re-export main types for convenience
+pub use engine::NpcEngine;
 pub use memory::{
     FadeDecision, Memory, MemorySystem, MemoryUpdate, RelationshipMemory,
     RelationshipUpdate, SelfMemories,
@@ -48,52 +48,10 @@ pub use traits::{
     Context, InteractionResult, MemoryManager, NpcBehavior, NpcStorage, Perception,
     PerceptionResult, SocialInteraction,
 };
-pub use types::{Intent, Npc, NpcAction, NpcBuilder};
+pub use types::{
+    Contract, CurrentState, GameState, GmInput, GmResponse, Intent, MemoryUpdateInput,
+    Npc, NpcAction, StateChange, TranscriptEntry,
+};
 
 /// Library version
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_npc_creation() {
-        let npc = Npc::new("Test", "location", "idle");
-        assert_eq!(npc.name, "Test");
-        assert_eq!(npc.location, "location");
-        assert_eq!(npc.activity, "idle");
-    }
-
-    #[test]
-    fn test_npc_builder() {
-        let npc = Npc::builder("Alice")
-            .location("tavern")
-            .activity("drinking")
-            .build();
-        
-        assert_eq!(npc.name, "Alice");
-        assert_eq!(npc.location, "tavern");
-        assert_eq!(npc.activity, "drinking");
-    }
-
-    #[test]
-    fn test_memory_system() {
-        let mut memories = MemorySystem::new();
-        memories.update_self_context("Testing");
-        assert_eq!(memories.self_memories.immediate_context, "Testing");
-        
-        memories.add_self_event("Event 1");
-        memories.add_self_event("Event 2");
-        assert_eq!(memories.self_memories.recent_events.len(), 2);
-    }
-
-    #[test]
-    fn test_intent_creation() {
-        let intent = Intent::with_target("Alice", "talk", "Bob", "Greeting");
-        assert_eq!(intent.npc, "Alice");
-        assert_eq!(intent.action, "talk");
-        assert_eq!(intent.target, Some("Bob".to_string()));
-        assert_eq!(intent.reason, "Greeting");
-    }
-}
