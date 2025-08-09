@@ -35,6 +35,7 @@ pub mod engine;
 pub mod llm;
 pub mod memory;
 pub mod parser;
+pub mod prompts;
 pub mod traits;
 pub mod types;
 
