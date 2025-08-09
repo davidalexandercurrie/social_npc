@@ -32,16 +32,21 @@ impl NpcEngine {
         let data_path = data_path.as_ref().to_path_buf();
         let prompt_builder = PromptBuilder::new(&data_path);
         
-        // TODO: Load NPCs from data directory
+        // Start with empty state
         let npcs = HashMap::new();
         let contracts = HashMap::new();
         
-        Ok(Self {
+        let mut engine = Self {
             data_path,
             llm_client: Arc::new(llm_client),
             state: Arc::new(Mutex::new(GameState { npcs, contracts })),
             prompt_builder,
-        })
+        };
+        
+        // Load NPCs from data directory
+        engine.load_npcs()?;
+        
+        Ok(engine)
     }
     
     /// Get the current game state
@@ -301,6 +306,9 @@ impl NpcEngine {
         let npc_name = &input.npc_name;
         log::debug!("Updating memories for {}", npc_name);
         
+        // Load current memories
+        let mut current_memories = self.load_npc_memories(npc_name)?;
+        
         // Build memory update prompt
         let intent_json = serde_json::to_string(&input.intent)?;
         let prompt = self.prompt_builder.build_memory_update_prompt(
@@ -318,13 +326,53 @@ impl NpcEngine {
         // Parse memory update
         let memory_update: MemoryUpdate = parser::extract_json(&response)?;
         
-        // Apply the update (for now just log it)
-        // In a real implementation, this would save to filesystem
+        // Apply the update to the memory system
+        current_memories.self_memories.immediate_context = memory_update.immediate_self_context.clone();
+        
+        if let Some(new_memory) = memory_update.new_self_memory {
+            current_memories.self_memories.add_recent_event(new_memory);
+        }
+        
+        // Update relationship memories
+        for (other_npc, rel_update) in memory_update.relationship_updates {
+            let relationship = current_memories.get_or_create_relationship(&other_npc);
+            
+            relationship.immediate_context = rel_update.immediate_context;
+            relationship.current_sentiment = rel_update.current_sentiment;
+            
+            if let Some(new_memory) = rel_update.new_memory {
+                relationship.add_memory(new_memory);
+            }
+            
+            if let Some(summary) = rel_update.long_term_summary_update {
+                relationship.long_term_summary = summary;
+            }
+            
+            if let Some(core_memory) = rel_update.potential_core_memory {
+                relationship.core_memories.push(core_memory);
+            }
+        }
+        
+        // Save updated memories
+        self.save_npc_memories(npc_name, &current_memories)?;
+        
         log::info!("  💭 {}: {}", npc_name, memory_update.immediate_self_context);
         
-        // TODO: Save updated memories to filesystem
-        
         Ok(())
+    }
+    
+    /// Load memories for an NPC
+    fn load_npc_memories(&self, npc_name: &str) -> Result<crate::memory::MemorySystem> {
+        let memory_path = self.data_path.join("npcs").join(npc_name).join("memories.json");
+        
+        if memory_path.exists() {
+            let content = std::fs::read_to_string(&memory_path)?;
+            let memories = serde_json::from_str(&content)?;
+            Ok(memories)
+        } else {
+            // This shouldn't happen if ensure_memories_exist was called, but handle it anyway
+            Ok(crate::memory::MemorySystem::new())
+        }
     }
     
     /// Execute a complete turn (collect, resolve, update)
@@ -346,6 +394,19 @@ impl NpcEngine {
         Ok(reality)
     }
     
+    /// Set the location and activity for an NPC
+    pub fn set_npc_state(&self, npc_name: &str, location: impl Into<String>, activity: impl Into<String>) -> Result<()> {
+        self.update_state(|state| {
+            if let Some(npc) = state.npcs.get_mut(npc_name) {
+                npc.location = location.into();
+                npc.activity = activity.into();
+                Ok(())
+            } else {
+                Err(anyhow::anyhow!("NPC '{}' not found", npc_name))
+            }
+        })
+    }
+    
     /// Initialize a new NPC with template files
     pub fn init_npc(&self, name: &str) -> Result<()> {
         // TODO: Create NPC directory and template files
@@ -354,7 +415,101 @@ impl NpcEngine {
     
     /// Load NPCs from the data directory
     pub fn load_npcs(&mut self) -> Result<()> {
-        // TODO: Load NPCs from filesystem
+        let npcs_dir = self.data_path.join("npcs");
+        
+        if !npcs_dir.exists() {
+            log::warn!("NPCs directory does not exist: {:?}", npcs_dir);
+            return Ok(());
+        }
+        
+        let mut npcs = HashMap::new();
+        
+        // Read all directories in the npcs folder
+        for entry in std::fs::read_dir(&npcs_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            
+            if path.is_dir() {
+                let npc_name = path.file_name()
+                    .and_then(|n| n.to_str())
+                    .ok_or_else(|| anyhow::anyhow!("Invalid NPC directory name"))?;
+                
+                log::info!("Loading NPC: {}", npc_name);
+                
+                // Check if personality.md exists
+                let personality_path = path.join("personality.md");
+                if !personality_path.exists() {
+                    log::warn!("No personality.md found for NPC: {}", npc_name);
+                    continue;
+                }
+                
+                // Create NPC with default values
+                let npc = Npc {
+                    name: npc_name.to_string(),
+                    location: "start".to_string(), // Default location
+                    activity: "idle".to_string(),   // Default activity
+                    folder_path: path.to_string_lossy().to_string(),
+                    active_contract: None,
+                    next_prompt: None,
+                };
+                
+                // Ensure memories exist (create from initial_memories.json if needed)
+                self.ensure_memories_exist(npc_name)?;
+                
+                npcs.insert(npc_name.to_string(), npc);
+            }
+        }
+        
+        // Update the game state with loaded NPCs
+        self.update_state(|state| {
+            state.npcs = npcs;
+            Ok(())
+        })?;
+        
+        log::info!("Loaded {} NPCs", self.get_state().npcs.len());
+        Ok(())
+    }
+    
+    /// Ensure memories.json exists for an NPC, creating from initial_memories.json if needed
+    fn ensure_memories_exist(&self, npc_name: &str) -> Result<()> {
+        let npc_dir = self.data_path.join("npcs").join(npc_name);
+        let memory_path = npc_dir.join("memories.json");
+        
+        if !memory_path.exists() {
+            let initial_path = npc_dir.join("initial_memories.json");
+            if initial_path.exists() {
+                log::info!("Creating memories.json from initial_memories.json for {}", npc_name);
+                let content = std::fs::read_to_string(&initial_path)?;
+                
+                // Validate it's valid JSON
+                let memories: crate::memory::MemorySystem = serde_json::from_str(&content)?;
+                
+                // Save as memories.json
+                let json = serde_json::to_string_pretty(&memories)?;
+                std::fs::write(&memory_path, json)?;
+            } else {
+                log::info!("Creating empty memories.json for {}", npc_name);
+                // Create empty memory system
+                let memories = crate::memory::MemorySystem::new();
+                let json = serde_json::to_string_pretty(&memories)?;
+                std::fs::write(&memory_path, json)?;
+            }
+        }
+        
+        Ok(())
+    }
+    
+    /// Save memories for an NPC
+    fn save_npc_memories(&self, npc_name: &str, memories: &crate::memory::MemorySystem) -> Result<()> {
+        let npc_dir = self.data_path.join("npcs").join(npc_name);
+        
+        // Create directory if it doesn't exist
+        std::fs::create_dir_all(&npc_dir)?;
+        
+        let memory_path = npc_dir.join("memories.json");
+        let json = serde_json::to_string_pretty(memories)?;
+        std::fs::write(memory_path, json)?;
+        
         Ok(())
     }
 }
